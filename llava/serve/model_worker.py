@@ -1,7 +1,6 @@
 """
 A model worker executes the model.
 """
-import json
 import time
 from PIL import Image
 import torch
@@ -58,9 +57,9 @@ def generate_stream(
     max_new_tokens = min(max_new_tokens, max_context_length - input_ids.shape[-1] - num_image_tokens)
 
     if max_new_tokens < 1:
-        yield json.dumps({"text": ori_prompt + "Exceeds max token length. Please start a new conversation, thanks.", "error_code": 0}).encode() + b"\0"
-        return
+        return  ori_prompt + "Exceeds max token length. Please start a new conversation, thanks."
 
+    start1 = time.time()
     model.generate(
         inputs=input_ids,
         do_sample=do_sample,
@@ -72,13 +71,15 @@ def generate_stream(
         use_cache=True,
         images=images,
     )
+    print(f"model infer time: {time.time() - start1}")
 
     generated_text = ori_prompt
     for new_text in streamer:
         generated_text += new_text
         if generated_text.endswith(stop_str):
             generated_text = generated_text[:-len(stop_str)]
-        yield json.dumps({"text": generated_text, "error_code": 0}).encode() + b"\0"
+
+    return generated_text
 
 
 if __name__ == "__main__":
@@ -98,6 +99,6 @@ if __name__ == "__main__":
     pil_images = [Image.open("/opt/LLaVA/images/shaked.png")]
 
     start = time.time()
-    for x in generate_stream(prompt, temperature, top_p, max_new_tokens, stop, tokenizer, model, image_processor, pil_images):
-        print(x)
+    x = generate_stream(prompt, temperature, top_p, max_new_tokens, stop, tokenizer, model, image_processor, pil_images)
+    print(x)
     print(f"process took {time.time() - start}")
