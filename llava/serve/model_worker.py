@@ -7,6 +7,7 @@ import json
 import time
 import threading
 import uuid
+from PIL import Image
 
 from fastapi import FastAPI, Request, BackgroundTasks
 from fastapi.responses import StreamingResponse
@@ -120,19 +121,19 @@ class ModelWorker:
         }
 
     @torch.inference_mode()
-    def generate_stream(self, params):
+    def generate_stream(self, params, pil_images: [Image] = None):
         tokenizer, model, image_processor = self.tokenizer, self.model, self.image_processor
 
         prompt = params["prompt"]
         ori_prompt = prompt
-        images = params.get("images", None)
+        images = pil_images or params.get("images", None)
         num_image_tokens = 0
         if images is not None and len(images) > 0 and self.is_multimodal:
             if len(images) > 0:
                 if len(images) != prompt.count(DEFAULT_IMAGE_TOKEN):
                     raise ValueError("Number of images does not match number of <image> tokens in prompt")
-
-                images = [load_image_from_base64(image) for image in images]
+                if pil_images is None:
+                    images = [load_image_from_base64(image) for image in images]
                 images = process_images(images, image_processor, model.config)
 
                 if type(images) is list:
@@ -248,38 +249,95 @@ async def get_status(request: Request):
     return worker.get_status()
 
 
+@torch.inference_mode()
+def generate_stream(
+        prompt, temperature, top_p, max_new_tokens, stop, tokenizer, model, image_processor, pil_images: [Image],
+        is_multimodal=True, device='cuda'
+):
+    ori_prompt = prompt
+    images = pil_images
+    num_image_tokens = 0
+    if images is not None and len(images) > 0 and is_multimodal:
+        if len(images) > 0:
+            if len(images) != prompt.count(DEFAULT_IMAGE_TOKEN):
+                raise ValueError("Number of images does not match number of <image> tokens in prompt")
+            # if pil_images is None:
+            #     images = [load_image_from_base64(image) for image in images]
+            images = process_images(images, image_processor, model.config)
+
+            if type(images) is list:
+                images = [image.to(model.device, dtype=torch.float16) for image in images]
+            else:
+                images = images.to(model.device, dtype=torch.float16)
+
+            replace_token = DEFAULT_IMAGE_TOKEN
+            if getattr(model.config, 'mm_use_im_start_end', False):
+                replace_token = DEFAULT_IM_START_TOKEN + replace_token + DEFAULT_IM_END_TOKEN
+            prompt = prompt.replace(DEFAULT_IMAGE_TOKEN, replace_token)
+
+            num_image_tokens = prompt.count(replace_token) * model.get_vision_tower().num_patches
+        else:
+            images = None
+        image_args = {"images": images}
+    else:
+        images = None
+        image_args = {}
+
+    temperature = float(temperature)
+    top_p = float(top_p)
+    max_context_length = getattr(model.config, 'max_position_embeddings', 2048)
+    max_new_tokens = min(int(max_new_tokens), 1024)
+    stop_str = stop
+    do_sample = True if temperature > 0.001 else False
+
+    input_ids = tokenizer_image_token(prompt, tokenizer, IMAGE_TOKEN_INDEX, return_tensors='pt').unsqueeze(0).to(device)
+    keywords = [stop_str]
+    stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
+    streamer = TextIteratorStreamer(tokenizer, skip_prompt=True, skip_special_tokens=True, timeout=15)
+
+    max_new_tokens = min(max_new_tokens, max_context_length - input_ids.shape[-1] - num_image_tokens)
+
+    if max_new_tokens < 1:
+        yield json.dumps({"text": ori_prompt + "Exceeds max token length. Please start a new conversation, thanks.", "error_code": 0}).encode() + b"\0"
+        return
+
+    model.generate(
+        inputs=input_ids,
+        do_sample=do_sample,
+        temperature=temperature,
+        top_p=top_p,
+        max_new_tokens=max_new_tokens,
+        streamer=streamer,
+        stopping_criteria=[stopping_criteria],
+        use_cache=True,
+        images=images,
+    )
+
+    generated_text = ori_prompt
+    for new_text in streamer:
+        generated_text += new_text
+        if generated_text.endswith(stop_str):
+            generated_text = generated_text[:-len(stop_str)]
+        yield json.dumps({"text": generated_text, "error_code": 0}).encode() + b"\0"
+
+
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--host", type=str, default="localhost")
-    parser.add_argument("--port", type=int, default=21002)
-    parser.add_argument("--worker-address", type=str,
-        default="http://localhost:21002")
-    parser.add_argument("--controller-address", type=str,
-        default="http://localhost:21001")
-    parser.add_argument("--model-path", type=str, default="facebook/opt-350m")
-    parser.add_argument("--model-base", type=str, default=None)
-    parser.add_argument("--model-name", type=str)
-    parser.add_argument("--device", type=str, default="cuda")
-    parser.add_argument("--multi-modal", action="store_true", help="Multimodal mode is automatically detected with model name, please make sure `llava` is included in the model path.")
-    parser.add_argument("--limit-model-concurrency", type=int, default=5)
-    parser.add_argument("--stream-interval", type=int, default=1)
-    parser.add_argument("--no-register", action="store_true")
-    parser.add_argument("--load-8bit", action="store_true")
-    parser.add_argument("--load-4bit", action="store_true")
-    args = parser.parse_args()
-    logger.info(f"args: {args}")
+    tokenizer, model, image_processor, context_len = load_pretrained_model(
+        model_path='liuhaotian/llava-v1.5-13b',
+        model_base=None,
+        model_name='llava-v1.5-13b',
+        load_8bit=False,
+        load_4bit=False,
+        device='cuda'
+    )
+    prompt = "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions. USER: <image>\nwho is this? ASSISTANT:"
+    temperature = 0.2
+    top_p = 0.7
+    max_new_tokens = 512
+    stop = '</s>'
+    pil_images = [Image.open("/opt/LLaVA/images/shaked.png")]
 
-    if args.multi_modal:
-        logger.warning("Multimodal mode is automatically detected with model name, please make sure `llava` is included in the model path.")
-
-    worker = ModelWorker(args.controller_address,
-                         args.worker_address,
-                         worker_id,
-                         args.no_register,
-                         args.model_path,
-                         args.model_base,
-                         args.model_name,
-                         args.load_8bit,
-                         args.load_4bit,
-                         args.device)
-    uvicorn.run(app, host=args.host, port=args.port, log_level="info")
+    start = time.time()
+    for x in generate_stream(prompt, temperature, top_p, max_new_tokens, stop, tokenizer, model, image_processor, pil_images):
+        print(x)
+    print(f"process took {time.time() - start}")
