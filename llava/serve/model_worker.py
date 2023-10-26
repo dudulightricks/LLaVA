@@ -5,11 +5,24 @@ import time
 from PIL import Image
 import torch
 
-from llava.model.builder import load_pretrained_model
+from llava.model import LlavaLlamaForCausalLM
 from llava.mm_utils import process_images, tokenizer_image_token, KeywordsStoppingCriteria
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
-from transformers import TextIteratorStreamer
+from transformers import AutoTokenizer, TextIteratorStreamer
 
+def load_pretrained_model_LLaVA_15(model_path, device_map="auto", device="cuda"):
+    kwargs = {"device_map": device_map, "torch_dtype": torch.float16}
+    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
+    model = LlavaLlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
+    model.resize_token_embeddings(len(tokenizer))
+
+    vision_tower = model.get_vision_tower()
+    if not vision_tower.is_loaded:
+        vision_tower.load_model()
+    vision_tower.to(device=device, dtype=torch.float16)
+    image_processor = vision_tower.image_processor
+
+    return tokenizer, model, image_processor
 
 @torch.inference_mode()
 def generate_stream(
@@ -83,13 +96,8 @@ def generate_stream(
 
 
 if __name__ == "__main__":
-    tokenizer, model, image_processor, context_len = load_pretrained_model(
-        model_path='liuhaotian/llava-v1.5-13b',
-        model_base=None,
-        model_name='llava-v1.5-13b',
-        load_8bit=False,
-        load_4bit=False,
-        device='cuda'
+    tokenizer, model, image_processor = load_pretrained_model_LLaVA_15(
+        model_path='liuhaotian/llava-v1.5-13b', device='cuda'
     )
     prompt = "A chat between a curious human and an artificial intelligence assistant. The assistant gives helpful, detailed, and polite answers to the human's questions. USER: <image>\nwho is this? ASSISTANT:"
     temperature = 0.2
@@ -100,5 +108,9 @@ if __name__ == "__main__":
 
     start = time.time()
     x = generate_stream(prompt, temperature, top_p, max_new_tokens, stop, tokenizer, model, image_processor, pil_images)
+    print(x)
+    print(f"process took {time.time() - start}")
+    start = time.time()
+    x = generate_stream(x + "USER: tell me about her eyes ASSISTANT:", temperature, top_p, max_new_tokens, stop, tokenizer, model, image_processor, pil_images)
     print(x)
     print(f"process took {time.time() - start}")
