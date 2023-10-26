@@ -12,8 +12,8 @@ from transformers import AutoTokenizer, TextIteratorStreamer
 
 def load_pretrained_model_LLaVA_15(model_path, device_map="auto", device="cuda"):
     kwargs = {"device_map": device_map, "torch_dtype": torch.float16}
-    tokenizer = AutoTokenizer.from_pretrained(model_path, use_fast=False)
-    model = LlavaLlamaForCausalLM.from_pretrained(model_path, low_cpu_mem_usage=True, **kwargs)
+    tokenizer = AutoTokenizer.from_pretrained("/opt/models/llava-tokenizer", use_fast=False)
+    model = LlavaLlamaForCausalLM.from_pretrained("/opt/models/llava", low_cpu_mem_usage=True, **kwargs)
     model.resize_token_embeddings(len(tokenizer))
 
     vision_tower = model.get_vision_tower()
