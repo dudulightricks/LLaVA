@@ -4,147 +4,12 @@ A model worker executes the model.
 import time
 from PIL import Image
 import torch
-
-from llava.model import LlavaLlamaForCausalLM
-from llava.mm_utils import process_images, tokenizer_image_token, StoppingCriteria
-from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
-from transformers import AutoTokenizer
-
-
-from queue import Queue
 from typing import Optional
 
-
-class BaseStreamer:
-    """
-    Base class from which `.generate()` streamers should inherit.
-    """
-
-    def put(self, value):
-        """Function that is called by `.generate()` to push new tokens"""
-        raise NotImplementedError()
-
-    def end(self):
-        """Function that is called by `.generate()` to signal the end of generation"""
-        raise NotImplementedError()
-
-
-class TextStreamer(BaseStreamer):
-    def __init__(self, tokenizer: "AutoTokenizer", skip_prompt: bool = False, **decode_kwargs):
-        self.tokenizer = tokenizer
-        self.skip_prompt = skip_prompt
-        self.decode_kwargs = decode_kwargs
-
-        # variables used in the streaming process
-        self.token_cache = []
-        self.print_len = 0
-        self.next_tokens_are_prompt = True
-
-    def put(self, value):
-        """
-        Receives tokens, decodes them, and prints them to stdout as soon as they form entire words.
-        """
-        if len(value.shape) > 1 and value.shape[0] > 1:
-            # value = value[0]
-            # self.put(value[0])
-            # self.put(value[1])
-            # return
-            raise ValueError("TextStreamer only supports batch size 1")
-        elif len(value.shape) > 1:
-            value = value[0]
-
-        if self.skip_prompt and self.next_tokens_are_prompt:
-            self.next_tokens_are_prompt = False
-            return
-
-        # Add the new token to the cache and decodes the entire thing.
-        self.token_cache.extend(value.tolist())
-        text = self.tokenizer.decode(self.token_cache, **self.decode_kwargs)
-
-        # After the symbol for a new line, we flush the cache.
-        if text.endswith("\n"):
-            printable_text = text[self.print_len :]
-            self.token_cache = []
-            self.print_len = 0
-        # If the last token is a CJK character, we print the characters.
-        elif len(text) > 0 and self._is_chinese_char(ord(text[-1])):
-            printable_text = text[self.print_len :]
-            self.print_len += len(printable_text)
-        # Otherwise, prints until the last space char (simple heuristic to avoid printing incomplete words,
-        # which may change with the subsequent token -- there are probably smarter ways to do this!)
-        else:
-            printable_text = text[self.print_len : text.rfind(" ") + 1]
-            self.print_len += len(printable_text)
-
-        self.on_finalized_text(printable_text)
-
-    def end(self):
-        """Flushes any remaining cache and prints a newline to stdout."""
-        # Flush the cache, if it exists
-        if len(self.token_cache) > 0:
-            text = self.tokenizer.decode(self.token_cache, **self.decode_kwargs)
-            printable_text = text[self.print_len :]
-            self.token_cache = []
-            self.print_len = 0
-        else:
-            printable_text = ""
-
-        self.next_tokens_are_prompt = True
-        self.on_finalized_text(printable_text, stream_end=True)
-
-    def on_finalized_text(self, text: str, stream_end: bool = False):
-        """Prints the new text to stdout. If the stream is ending, also prints a newline."""
-        print(text, flush=True, end="" if not stream_end else None)
-
-    def _is_chinese_char(self, cp):
-        """Checks whether CP is the codepoint of a CJK character."""
-        # This defines a "chinese character" as anything in the CJK Unicode block:
-        #   https://en.wikipedia.org/wiki/CJK_Unified_Ideographs_(Unicode_block)
-        #
-        # Note that the CJK Unicode block is NOT all Japanese and Korean characters,
-        # despite its name. The modern Korean Hangul alphabet is a different block,
-        # as is Japanese Hiragana and Katakana. Those alphabets are used to write
-        # space-separated words, so they are not treated specially and handled
-        # like the all of the other languages.
-        if (
-            (cp >= 0x4E00 and cp <= 0x9FFF)
-            or (cp >= 0x3400 and cp <= 0x4DBF)  #
-            or (cp >= 0x20000 and cp <= 0x2A6DF)  #
-            or (cp >= 0x2A700 and cp <= 0x2B73F)  #
-            or (cp >= 0x2B740 and cp <= 0x2B81F)  #
-            or (cp >= 0x2B820 and cp <= 0x2CEAF)  #
-            or (cp >= 0xF900 and cp <= 0xFAFF)
-            or (cp >= 0x2F800 and cp <= 0x2FA1F)  #
-        ):  #
-            return True
-
-        return False
-
-
-class TextIteratorStreamer(TextStreamer):
-    def __init__(
-        self, tokenizer: "AutoTokenizer", skip_prompt: bool = False, timeout: Optional[float] = None, **decode_kwargs
-    ):
-        super().__init__(tokenizer, skip_prompt, **decode_kwargs)
-        self.text_queue = Queue()
-        self.stop_signal = None
-        self.timeout = timeout
-
-    def on_finalized_text(self, text: str, stream_end: bool = False):
-        """Put the new text in the queue. If the stream is ending, also put a stop signal in the queue."""
-        self.text_queue.put(text, timeout=self.timeout)
-        if stream_end:
-            self.text_queue.put(self.stop_signal, timeout=self.timeout)
-
-    def __iter__(self):
-        return self
-
-    def __next__(self):
-        value = self.text_queue.get(timeout=self.timeout)
-        if value == self.stop_signal:
-            raise StopIteration()
-        else:
-            return value
+from llava.model import LlavaLlamaForCausalLM
+from llava.mm_utils import process_images, tokenizer_image_token, KeywordsStoppingCriteria
+from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
+from transformers import AutoTokenizer, TextIteratorStreamer
 
 
 class BatchTextStreamer:
@@ -176,38 +41,6 @@ class BatchTextStreamer:
                 result = result[:-len(self.stop_str)]
         return result
 
-
-
-class KeywordsStoppingCriteria(StoppingCriteria):
-    def __init__(self, keywords, tokenizer, input_ids):
-        self.keywords = keywords
-        self.keyword_ids = []
-        self.max_keyword_len = 0
-        for keyword in keywords:
-            cur_keyword_ids = tokenizer(keyword).input_ids
-            if len(cur_keyword_ids) > 1 and cur_keyword_ids[0] == tokenizer.bos_token_id:
-                cur_keyword_ids = cur_keyword_ids[1:]
-            if len(cur_keyword_ids) > self.max_keyword_len:
-                self.max_keyword_len = len(cur_keyword_ids)
-            self.keyword_ids.append(torch.tensor(cur_keyword_ids))
-        self.tokenizer = tokenizer
-        self.start_len = input_ids.shape[1]
-
-    def __call__(self, output_ids: torch.LongTensor, scores: torch.FloatTensor, **kwargs) -> bool:
-        # output_ids = output_ids[:1, :]
-        # if output_ids.shape[0] != 1:
-        #     return self(output_ids[:1, :], scores, **kwargs) and self(output_ids[1:, :], scores, **kwargs)
-        assert output_ids.shape[0] == 1, f"Only support batch size 1 (yet) {output_ids.shape}"  # TODO
-        offset = min(output_ids.shape[1] - self.start_len, self.max_keyword_len)
-        self.keyword_ids = [keyword_id.to(output_ids.device) for keyword_id in self.keyword_ids]
-        for keyword_id in self.keyword_ids:
-            if (output_ids[0, -keyword_id.shape[0]:] == keyword_id).all():
-                return True
-        outputs = self.tokenizer.batch_decode(output_ids[:, -offset:], skip_special_tokens=True)[0]
-        for keyword in self.keywords:
-            if keyword in outputs:
-                return True
-        return False
 
 class BatchKeywordsStoppingCriteria:
     def __init__(self, stopping_criterias: [KeywordsStoppingCriteria]):
