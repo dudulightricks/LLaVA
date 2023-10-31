@@ -11,6 +11,7 @@ from llava.mm_utils import process_images, tokenizer_image_token, KeywordsStoppi
 from llava.constants import IMAGE_TOKEN_INDEX, DEFAULT_IMAGE_TOKEN, DEFAULT_IM_START_TOKEN, DEFAULT_IM_END_TOKEN
 from transformers import AutoTokenizer, TextIteratorStreamer
 
+SPACE_TOKEN = 29871
 
 class BatchTextStreamer:
     def __init__(
@@ -66,6 +67,18 @@ def load_pretrained_model_LLaVA_15(model_path, device_map="auto", device="cuda")
 
     return tokenizer, model, image_processor
 
+def pad_tensors_list_to_size(tensors_list, target_size):
+    padded_tensors_list = []
+    for tensor in tensors_list:
+        padding_size = target_size - tensor.size(1)
+        if padding_size > 0:
+            padding = torch.full((1, padding_size), fill_value=SPACE_TOKEN, dtype=tensor.dtype, device=tensor.device)
+            padded_tensor = torch.cat((tensor, padding), dim=1)
+        else:
+            padded_tensor = tensor
+        padded_tensors_list.append(padded_tensor)
+    return padded_tensors_list
+
 @torch.inference_mode()
 def generate_stream(
         prompts, temperature, top_p, max_new_tokens, stop, tokenizer, model, image_processor, pil_images: [Image],
@@ -80,6 +93,7 @@ def generate_stream(
     keywords = [stop_str]
     max_context_length = getattr(model.config, 'max_position_embeddings', 2048)
     max_new_tokens = min(int(max_new_tokens), 1024)
+    max_input_ids_len = 0
 
     if images is None or len(images) == 0 or not is_multimodal:
         images = None
@@ -90,6 +104,7 @@ def generate_stream(
         for prompt, prompt_images in zip(prompts, images):
             input_ids, prompt_images, num_image_tokens = \
                 handle_single_prompt(prompt, prompt_images, device, image_processor, model, tokenizer)
+            max_input_ids_len = max(max_input_ids_len, input_ids.shape[-1])
             ids.append(input_ids)
             prom.append(prompt_images)
 
@@ -100,6 +115,7 @@ def generate_stream(
             stopping_criteria = KeywordsStoppingCriteria(keywords, tokenizer, input_ids)
             stop_crs.append(stopping_criteria)
 
+        ids = pad_tensors_list_to_size(ids, max_input_ids_len)
         input_ids = torch.stack(ids, dim=0).squeeze()
         images = torch.stack(prom, dim=0).squeeze()
         stopping_criteria = BatchKeywordsStoppingCriteria(stop_crs)
