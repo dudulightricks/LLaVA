@@ -108,7 +108,7 @@ def generate_stream(
     top_p = float(top_p)
 
     do_sample = True if temperature > 0.001 else False
-    streamer = BatchTextStreamer(tokenizer, batch_size=2, stop_str=stop_str, skip_prompt=True, skip_special_tokens=True, timeout=15)
+    streamer = BatchTextStreamer(tokenizer, batch_size=len(prompts), stop_str=stop_str, skip_prompt=True, skip_special_tokens=True, timeout=15)
 
     start1 = time.time()
 
