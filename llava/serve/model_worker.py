@@ -25,6 +25,10 @@ class BatchTextStreamer:
             self.streamers.append(TextIteratorStreamer(tokenizer, skip_prompt, timeout, **decode_kwargs))
 
     def put(self, value):
+        if self.batch_size == 1:
+            self.streamers[0].put(value)
+            return
+
         for i, x in enumerate(value):
             if x.dim() == 0:
                 x = x.unsqueeze(0)
@@ -116,8 +120,8 @@ def generate_stream(
             stop_crs.append(stopping_criteria)
 
         ids = pad_tensors_list_to_size(ids, max_input_ids_len)
-        input_ids = torch.stack(ids, dim=0).squeeze()
-        images = torch.stack(prom, dim=0).squeeze()
+        input_ids = torch.cat(ids, dim=0)
+        images = torch.cat(prom, dim=0)
         stopping_criteria = BatchKeywordsStoppingCriteria(stop_crs)
 
     temperature = float(temperature)
