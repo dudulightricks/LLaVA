@@ -1,3 +1,9 @@
+[tool.poetry]
+name = "LLaVa"
+version = "1.0.0"
+description = "Implementation and training logic for LLava"
+authors = []
+
 [build-system]
 requires = ["setuptools>=61.0"]
 build-backend = "setuptools.build_meta"

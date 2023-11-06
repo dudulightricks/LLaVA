@@ -1,7 +1,7 @@
 #!/bin/bash
 
 deepspeed llava/train/train_mem.py \
-    --deepspeed ./scripts/zero3.json \
+    --deepspeed ./scripts/zero3_offload.json \
     --model_name_or_path liuhaotian/llava-v1.5-13b \
     --version v1 \
     --data_path ./playground/data/dudu_finetune/dudu-finetune-data.json \
