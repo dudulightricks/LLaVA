@@ -1,7 +1,8 @@
 #!/bin/bash
 
-python llava/train/train_mem.py \
+deepspeed llava/train/train_mem.py \
     --lora_enable True --lora_r 128 --lora_alpha 256 --mm_projector_lr 2e-5 \
+    --deepspeed ./scripts/zero3.json \
     --model_name_or_path liuhaotian/llava-v1.5-13b \
     --version v1 \
     --data_path ./playground/data/dudu_finetune/dudu-finetune-data.json \
@@ -16,7 +17,7 @@ python llava/train/train_mem.py \
     --bf16 True \
     --output_dir ./checkpoints/llava-v1.5-13b-task-lora-dudu \
     --num_train_epochs 1000 \
-    --per_device_train_batch_size 4 \
+    --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 4 \
     --evaluation_strategy "epoch" \
