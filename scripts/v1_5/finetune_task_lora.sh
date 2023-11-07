@@ -15,14 +15,14 @@ deepspeed llava/train/train_mem.py \
     --image_aspect_ratio pad \
     --group_by_modality_length True \
     --bf16 True \
-    --output_dir ./checkpoints/llava-v1.5-13b-task-lora-dudu \
-    --num_train_epochs 9 \
-    --per_device_train_batch_size 32 \
+    --output_dir ./checkpoints/llava-v1.5-13b-task-lora-dudu-small \
+    --num_train_epochs 10 \
+    --per_device_train_batch_size 8 \
     --per_device_eval_batch_size 1 \
-    --gradient_accumulation_steps 4 \
+    --gradient_accumulation_steps 1 \
     --evaluation_strategy "epoch" \
     --save_strategy "steps" \
-    --save_steps 2 \
+    --save_steps 10 \
     --save_total_limit 1 \
     --learning_rate 2e-4 \
     --weight_decay 0. \
