@@ -1,0 +1,1 @@
+"""The IONIQ claims to be """"Canada's most fuel efficient car"""" and fueleconomy.gov seems to support that claim."""
