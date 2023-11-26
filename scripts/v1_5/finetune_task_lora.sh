@@ -16,10 +16,10 @@ deepspeed llava/train/train_mem.py \
     --group_by_modality_length True \
     --bf16 True \
     --output_dir ./checkpoints/llava-v1.5-13b-task-lora-dudu-1249 \
-    --num_train_epochs 10 \
-    --per_device_train_batch_size 8 \
+    --num_train_epochs 2 \
+    --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 1 \
-    --gradient_accumulation_steps 1 \
+    --gradient_accumulation_steps 4 \
     --evaluation_strategy "epoch" \
     --save_strategy "steps" \
     --save_steps 10 \
