@@ -5,8 +5,8 @@ deepspeed llava/train/train_mem.py \
     --deepspeed ./scripts/zero3.json \
     --model_name_or_path liuhaotian/llava-v1.5-13b \
     --version v1 \
-    --data_path ./playground/data/dudu_finetune/dudu-finetune-data-1249.json \
-    --image_folder ./playground/data/dudu_finetune/yoav-1249 \
+    --data_path ./playground/data/gpt200.json \
+    --image_folder ./playground/data/gpt220k \
     --vision_tower openai/clip-vit-large-patch14-336 \
     --mm_projector_type mlp2x_gelu \
     --mm_vision_select_layer -2 \
@@ -15,8 +15,8 @@ deepspeed llava/train/train_mem.py \
     --image_aspect_ratio pad \
     --group_by_modality_length True \
     --bf16 True \
-    --output_dir ./checkpoints/llava-v1.5-13b-task-lora-dudu-1249 \
-    --num_train_epochs 2 \
+    --output_dir ./checkpoints/llava-v1.5-13b-task-lora-gpt-220 \
+    --num_train_epochs 3 \
     --per_device_train_batch_size 32 \
     --per_device_eval_batch_size 1 \
     --gradient_accumulation_steps 4 \
