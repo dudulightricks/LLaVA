@@ -5,6 +5,7 @@ import torch
 import math
 import ast
 
+import numpy as np
 from transformers import StoppingCriteria
 from llava.constants import IMAGE_TOKEN_INDEX
 
@@ -149,26 +150,39 @@ def load_image_from_base64(image):
     return Image.open(BytesIO(base64.b64decode(image)))
 
 
-def expand2square(pil_img, background_color):
-    width, height = pil_img.size
-    if width == height:
-        return pil_img
-    elif width > height:
-        result = Image.new(pil_img.mode, (width, width), background_color)
-        result.paste(pil_img, (0, (width - height) // 2))
-        return result
-    else:
-        result = Image.new(pil_img.mode, (height, height), background_color)
-        result.paste(pil_img, ((height - width) // 2, 0))
-        return result
+def expand2square(pil_image, background_color):
+    # Convert the image to a NumPy array
+    image_data = np.array(pil_image) if not isinstance(pil_image, np.ndarray) else pil_image
 
+    height, width, _ = image_data.shape
+    # width, height = pil_image.size
+    new_size = max(width, height)
+    left_padding = (new_size - width) // 2
+    right_padding = new_size - width - left_padding
+    top_padding = (new_size - height) // 2
+    bottom_padding = new_size - height - top_padding
+
+    # Use numpy.pad to add padding to the array
+    padded_data = np.pad(
+        image_data,
+        ((top_padding, bottom_padding), (left_padding, right_padding), (0, 0)),
+        mode='constant',
+        constant_values=((background_color[0], background_color[0]),
+                         (background_color[1], background_color[1]),
+                         (background_color[2], background_color[2]))
+    )
+
+    # Convert the padded array back to a PIL image
+    squared_image = Image.fromarray(padded_data.astype('uint8'), 'RGB')
+
+    return squared_image
 
 def process_images(images, image_processor, model_cfg):
     image_aspect_ratio = getattr(model_cfg, "image_aspect_ratio", None)
     new_images = []
     if image_aspect_ratio == 'pad':
         for image in images:
-            image = expand2square(image, tuple(int(x*255) for x in image_processor.image_mean))
+            image = expand2square(image, tuple(int(x * 255) for x in image_processor.image_mean))
             image = image_processor.preprocess(image, return_tensors='pt')['pixel_values'][0]
             new_images.append(image)
     elif image_aspect_ratio == "anyres":
@@ -179,7 +193,13 @@ def process_images(images, image_processor, model_cfg):
         return image_processor(images, return_tensors='pt')['pixel_values']
     if all(x.shape == new_images[0].shape for x in new_images):
         new_images = torch.stack(new_images, dim=0)
-    return new_images
+
+    prompt_images = new_images
+    if type(prompt_images) is list:
+        prompt_images = [image.to(device='cuda', dtype=torch.bfloat16) for image in prompt_images]
+    else:
+        prompt_images = prompt_images.to(device='cuda', dtype=torch.bfloat16)
+    return prompt_images
 
 
 def tokenizer_image_token(prompt, tokenizer, image_token_index=IMAGE_TOKEN_INDEX, return_tensors=None):
